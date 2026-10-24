@@ -82,6 +82,7 @@ EXPO_PUBLIC_MODEL_BASE_URL=http://192.168.1.100:8000/v1
 EXPO_PUBLIC_APPLESS_MODEL=OUI-1
 EXPO_PUBLIC_APPLESS_MAX_TOKENS=4096
 EXPO_PUBLIC_APPLESS_PREFETCH_LIMIT=1
+# EXPO_PUBLIC_APPLESS_DEBUG=0     # disable development model request/output logs
 # EXPO_PUBLIC_EXA_API_KEY=             # enable web_search (Exa)
 # EXPO_PUBLIC_UNSPLASH_ACCESS_KEY=     # semantic photos (else LoremFlickr)
 ```
@@ -93,6 +94,17 @@ development host. On a real phone, `localhost` is the phone itself. For a
 standalone native build, prefer an HTTPS endpoint; cleartext HTTP/local-network
 access may require platform-specific build permissions. Web builds also need
 the server to allow their origin. Restart Expo after changing environment values.
+
+### Inspect model requests and outputs
+
+In development, AppLess logs each model request, response status, streamed
+completion summary, tool call, tool result, and model output with the
+`[AppLess][model]` prefix. API keys are never included. Set
+`EXPO_PUBLIC_APPLESS_DEBUG=0` to disable these logs.
+
+Run `npx expo start` and watch the Expo CLI terminal for the logs. For higher
+fidelity inspection, use React Native DevTools' Console panel or a Hermes
+development build. These logs are disabled in production builds.
 
 Local servers without authentication open immediately. For a protected endpoint,
 start vLLM with `bash scripts/serve-oui.sh --api-key your-server-key` and set

@@ -37,6 +37,13 @@ export const NEEDS_LIVE_DATA = "needs live data";
 /** Rounds that may end in tool calls before we force a plain generation. */
 const MAX_TOOL_ROUNDS = 3;
 
+const DEBUG_MODEL = __DEV__ && process.env.EXPO_PUBLIC_APPLESS_DEBUG !== "0";
+
+function debugModel(event: string, details: Record<string, unknown> = {}) {
+  if (!DEBUG_MODEL) return;
+  console.log(`[AppLess][model] ${event}`, details);
+}
+
 interface StreamHandlers {
   onDelta: (text: string) => void;
   onDone: (info: StreamEndInfo) => void;
@@ -141,6 +148,21 @@ async function streamRound(
     throw new Error("Enter an access key for the model server");
   }
 
+  const requestStartedAt = performance.now();
+  debugModel("request", {
+    endpoint: `${MODEL_BASE_URL}/chat/completions`,
+    model: APPLESS_MODEL,
+    messageCount: convo.length,
+    messages: convo.map((message) => ({
+      role: message.role,
+      contentLength: message.content?.length ?? 0,
+      hasToolCalls: !!message.tool_calls?.length,
+    })),
+    toolsEnabled: includeTools,
+    maxTokens: APPLESS_MAX_TOKENS,
+    authenticated: !!apiKey,
+  });
+
   let res;
   for (;;) {
     res = await expoFetch(`${MODEL_BASE_URL}/chat/completions`, {
@@ -179,6 +201,11 @@ async function streamRound(
     }
     throw new Error(detail.slice(0, 500) || `Model server HTTP ${res.status}`);
   }
+
+  debugModel("response-opened", {
+    status: res.status,
+    elapsedMs: Math.round(performance.now() - requestStartedAt),
+  });
 
   const reader = res.body.getReader();
   const decode = createUtf8Decoder();
@@ -261,6 +288,18 @@ async function streamRound(
     throw new Error("stream dropped before any content arrived");
   }
   if (!content && toolCalls.size === 0) throw new Error("The model returned no screen content - retry");
+  debugModel("response-complete", {
+    elapsedMs: Math.round(performance.now() - requestStartedAt),
+    finishReason,
+    contentLength: content.length,
+    output: content,
+    toolCalls: [...toolCalls.values()].map((call) => ({
+      id: call.id,
+      name: call.function.name,
+      arguments: call.function.arguments,
+    })),
+    dropped,
+  });
   return {
     finish: finishReason === "tool_calls" && toolCalls.size > 0 ? "tool_calls" : "content",
     content,
@@ -294,7 +333,13 @@ export async function streamScreen(messages: ChatMessage[], handlers: StreamHand
         return { name: tc.function.name, args };
       });
 
+      debugModel("tool-round", {
+        round,
+        calls: calls.map((call) => ({ name: call.name, arguments: call.args })),
+      });
+
       if ((onToolRound?.(calls) ?? "continue") === "abort") {
+        debugModel("tool-round-aborted", { round, reason: "caller refused tool execution" });
         throw new Error(NEEDS_LIVE_DATA);
       }
 
@@ -304,6 +349,14 @@ export async function streamScreen(messages: ChatMessage[], handlers: StreamHand
         tool_calls: result.toolCalls,
       });
       const outputs = await Promise.all(calls.map((c) => executeTool(c.name, c.args, signal)));
+      debugModel("tool-results", {
+        round,
+        results: outputs.map((output, index) => ({
+          name: calls[index]?.name,
+          contentLength: output.length,
+          output,
+        })),
+      });
       if (signal?.aborted) return;
       result.toolCalls.forEach((tc, i) => {
         convo.push({ role: "tool", tool_call_id: tc.id, content: outputs[i] });
@@ -311,6 +364,7 @@ export async function streamScreen(messages: ChatMessage[], handlers: StreamHand
     }
   } catch (err) {
     if (signal?.aborted) return;
+    debugModel("error", { message: err instanceof Error ? err.message : String(err) });
     onError(err instanceof Error ? err : new Error(String(err)));
   }
 }
